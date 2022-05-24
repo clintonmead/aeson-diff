@@ -34,6 +34,7 @@ library
   exposed-modules:     Data.Aeson.Diff
                      , Data.Aeson.Patch
                      , Data.Aeson.Pointer
+                     , Data.Aeson.Codec
   build-depends:       base >=4.11.1 && <4.17
                      , aeson >= 2.0.3
                      , bytestring >= 0.10
@@ -41,6 +42,7 @@ library
                      , scientific
                      , text
                      , vector
+                     , yaml
 
 executable             json-diff
   default-language:    Haskell2010
