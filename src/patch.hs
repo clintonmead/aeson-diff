@@ -3,25 +3,30 @@
 module Main (main) where
 
 import           Control.Exception (bracket)
-import           Data.Aeson (Result(Error, Success), Value, decode, encode, fromJSON)
+import           Codec (decode, encode, AesonFormat(..))
+import           Data.Aeson (Result(Error, Success), Value, fromJSON)
 import           Data.Aeson.Diff (patch)
 import qualified Data.ByteString.Char8     as BS
 import qualified Data.ByteString.Lazy      as BSL
-import           Options.Applicative (fullDesc, info, execParser, helper, metavar, progDesc, argument, help, value, long, option, short)
+import           Options.Applicative (fullDesc, info, execParser, helper, metavar, progDesc, argument, help, value, long, option, short, switch)
 import           Options.Applicative.Types (Parser, readerAsk)
 import           System.IO (Handle, IOMode(ReadMode, WriteMode), hClose, openFile, stdin, stdout)
 
 type File = Maybe FilePath
+
+type Handle' = (Handle, Maybe AesonFormat, File)
 
 -- | Command-line options.
 data PatchOptions = PatchOptions
     { optionOut   :: File -- ^ JSON destination
     , optionPatch :: File -- ^ Patch input
     , optionFrom  :: File -- ^ JSON source
+    , optionYaml  :: Bool
     }
 
 data Configuration = Configuration
-    { cfgOut   :: Handle
+    { cfgOptions :: PatchOptions
+    , cfgOut   :: Handle
     , cfgPatch :: Handle
     , cfgFrom  :: Handle
     }
@@ -43,6 +48,10 @@ optionParser = PatchOptions
         (  metavar "FROM"
         <> help "JSON file to patch."
         )
+    <*> switch
+        (  long "yaml"
+        <> help "Use yaml decoding and encoding."
+        )
   where
     fileP = do
         s <- readerAsk
@@ -50,10 +59,10 @@ optionParser = PatchOptions
             "-" -> Nothing
             _ -> Just s
 
-jsonRead :: Handle -> IO Value
-jsonRead fp = do
+jsonRead :: Handle' -> IO Value
+jsonRead (fp, mformat, mfilename) = do
     s <- BS.hGetContents fp
-    case decode (BSL.fromStrict s) of
+    case decode mformat mfilename (BSL.fromStrict s) of
         Nothing -> error "Could not parse as JSON"
         Just v -> return v
 
@@ -71,7 +80,8 @@ run opt = bracket (load opt) close process
     load :: PatchOptions -> IO Configuration
     load PatchOptions{..} =
         Configuration
-            <$> openw optionOut
+            <$> pure opt
+            <*> openw optionOut
             <*> openr optionPatch
             <*> openr optionFrom
 
@@ -83,11 +93,12 @@ run opt = bracket (load opt) close process
 
 process :: Configuration -> IO ()
 process Configuration{..} = do
-    json_patch <- jsonRead cfgPatch
-    json_from <- jsonRead cfgFrom
+    let mformat = if optionYaml cfgOptions then Just AesonYAML else Nothing
+    json_patch <- jsonRead (cfgPatch, mformat, optionPatch cfgOptions)
+    json_from <- jsonRead (cfgFrom, mformat, optionFrom cfgOptions)
     case fromJSON json_patch >>= flip patch json_from of
         Error e -> error e
-        Success d -> BS.hPutStrLn cfgOut $ BSL.toStrict (encode d)
+        Success d -> BS.hPutStrLn cfgOut $ BSL.toStrict (encode mformat (optionOut cfgOptions) d)
 
 main :: IO ()
 main = execParser opts >>= run
