@@ -3,7 +3,7 @@
 module Main (main) where
 
 import           Control.Exception (bracket)
-import           Codec (decode, encode, AesonFormat(..))
+import           Codec (decode, encode, ForceFormat(..))
 import           Data.Aeson (Result(Error, Success), Value, fromJSON)
 import           Data.Aeson.Diff (patch)
 import qualified Data.ByteString.Char8     as BS
@@ -13,8 +13,6 @@ import           Options.Applicative.Types (Parser, readerAsk)
 import           System.IO (Handle, IOMode(ReadMode, WriteMode), hClose, openFile, stdin, stdout)
 
 type File = Maybe FilePath
-
-type Handle' = (Handle, Maybe AesonFormat, File)
 
 -- | Command-line options.
 data PatchOptions = PatchOptions
@@ -59,8 +57,8 @@ optionParser = PatchOptions
             "-" -> Nothing
             _ -> Just s
 
-jsonRead :: Handle' -> IO Value
-jsonRead (fp, mformat, mfilename) = do
+jsonRead :: Handle -> ForceFormat -> File -> IO Value
+jsonRead fp mformat mfilename = do
     s <- BS.hGetContents fp
     case decode mformat mfilename (BSL.fromStrict s) of
         Nothing -> error "Could not parse as JSON"
@@ -93,9 +91,9 @@ run opt = bracket (load opt) close process
 
 process :: Configuration -> IO ()
 process Configuration{..} = do
-    let mformat = if optionYaml cfgOptions then Just AesonYAML else Nothing
-    json_patch <- jsonRead (cfgPatch, mformat, optionPatch cfgOptions)
-    json_from <- jsonRead (cfgFrom, mformat, optionFrom cfgOptions)
+    let mformat = if optionYaml cfgOptions then ForceYaml else AutodetectFormat
+    json_patch <- jsonRead cfgPatch mformat (optionPatch cfgOptions)
+    json_from <- jsonRead cfgFrom mformat (optionFrom cfgOptions)
     case fromJSON json_patch >>= flip patch json_from of
         Error e -> error e
         Success d -> BS.hPutStrLn cfgOut $ BSL.toStrict (encode mformat (optionOut cfgOptions) d)

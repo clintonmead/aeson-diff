@@ -3,7 +3,7 @@
 module Main (main) where
 
 import           Control.Exception (bracket)
-import           Codec (encode, decode, AesonFormat(..))
+import           Codec (encode, decode, ForceFormat(..))
 import           Data.Aeson (Value)
 import           Data.Aeson.Diff (Config(Config), diff')
 import qualified Data.ByteString.Char8     as BS
@@ -13,8 +13,6 @@ import           Options.Applicative.Types (Parser, readerAsk)
 import           System.IO (Handle, IOMode(ReadMode, WriteMode), hClose, openFile, stdin, stdout)
 
 type File = Maybe FilePath
-
-type Handle' = (Handle, Maybe AesonFormat, File)
 
 -- | Command-line options.
 data DiffOptions = DiffOptions
@@ -64,11 +62,14 @@ optionParser = DiffOptions
             "-" -> Nothing
             _ -> Just s
 
-jsonFile :: Handle' -> IO Value
-jsonFile (fp, mformat, mfilepath) = do
+jsonFile :: Handle -> ForceFormat -> File -> IO Value
+jsonFile fp mformat mfilepath = do
     s <- BS.hGetContents fp
     case decode mformat mfilepath (BSL.fromStrict s) of
-        Nothing -> error "Could not parse as JSON"
+        Nothing ->
+          case mformat of
+            ForceYaml ->        error "Could not parse as YAML"
+            AutodetectFormat -> error "Could not parse file. Make sure the file contents and the extension correspond: i.e. use '.json' for JSON files."
         Just v -> return v
 
 run :: DiffOptions -> IO ()
@@ -99,9 +100,9 @@ run opt = bracket (load opt) close process
 
 process :: Configuration -> IO ()
 process Configuration{..} = do
-    let mformat = if optionYaml cfgOptions then Just AesonYAML else Nothing
-    json_from <- jsonFile (cfgFrom, mformat, optionFrom cfgOptions)
-    json_to <- jsonFile (cfgTo, mformat, optionTo cfgOptions)
+    let mformat = if optionYaml cfgOptions then ForceYaml else AutodetectFormat
+    json_from <- jsonFile cfgFrom mformat (optionFrom cfgOptions)
+    json_to <- jsonFile cfgTo mformat (optionTo cfgOptions)
     let c = Config cfgTst
     let p = diff' c json_from json_to
     BS.hPutStrLn cfgOut $ BSL.toStrict (encode mformat (optionOut cfgOptions) p)

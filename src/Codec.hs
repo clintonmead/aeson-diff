@@ -1,22 +1,28 @@
-module Codec (encode, decode, AesonFormat (..)) where
+module Codec (encode, decode, ForceFormat (..)) where
 
 import qualified Data.Aeson as Aeson
 import qualified Data.Yaml as Yaml
-import qualified Data.ByteString as B
 import qualified Data.ByteString.Lazy as BL
 import           Control.Applicative ((<|>))
 import           Data.Char           (toLower)
 import           Data.List           (isSuffixOf)
 
-data AesonFormat = AesonJSON | AesonYAML deriving (Show, Eq)
+data ForceFormat = ForceYaml | AutodetectFormat deriving (Show, Eq)
 
-decode :: Aeson.FromJSON a => Maybe AesonFormat -> Maybe FilePath -> BL.ByteString -> Maybe a
-decode (Just AesonYAML) _ = decodeYamlFirst
-decode (Just AesonJSON) _ = decodeJsonFirst
-decode _ (Just fn) | ".yaml" `isSuffixOf` (toLower <$> fn) ||
-                     ".yml"  `isSuffixOf` (toLower <$> fn) = decodeYamlFirst
-decode _ (Just fn) | ".json" `isSuffixOf` (toLower <$> fn) = decodeJsonFirst
-decode _ _ = decodeJsonFirst
+isYamlPath :: [Char] -> Bool
+isYamlPath fn =
+     ".yaml" `isSuffixOf` map toLower fn
+  || ".yml"  `isSuffixOf` map toLower fn
+
+isJsonPath :: [Char] -> Bool
+isJsonPath fn =
+     ".json" `isSuffixOf` map toLower fn
+
+decode :: Aeson.FromJSON a => ForceFormat -> Maybe FilePath -> BL.ByteString -> Maybe a
+decode ForceYaml        _                         = decodeYamlFirst
+decode AutodetectFormat (Just fn) | isYamlPath fn = decodeYamlFirst
+decode AutodetectFormat (Just fn) | isJsonPath fn = Aeson.decode
+decode AutodetectFormat _                         = decodeJsonFirst
 
 
 decodeYamlFirst :: Aeson.FromJSON a => BL.ByteString -> Maybe a
@@ -25,10 +31,7 @@ decodeYamlFirst s = Yaml.decodeThrow (BL.toStrict s) <|> Aeson.decode s
 decodeJsonFirst :: Aeson.FromJSON a => BL.ByteString -> Maybe a
 decodeJsonFirst s = Aeson.decode s <|> Yaml.decodeThrow (BL.toStrict s)
 
-encode :: Aeson.ToJSON a => Maybe AesonFormat -> Maybe FilePath -> a -> BL.ByteString
-encode (Just AesonYAML) _ = BL.fromStrict . Yaml.encode
-encode (Just AesonJSON) _ = Aeson.encode
-encode _ (Just fn) | ".yaml" `isSuffixOf` (toLower <$> fn) ||
-                     ".yml"  `isSuffixOf` (toLower <$> fn) = BL.fromStrict . Yaml.encode
-encode _ (Just fn) | ".json" `isSuffixOf` (toLower <$> fn) = Aeson.encode
-encode _ _ = Aeson.encode
+encode :: Aeson.ToJSON a => ForceFormat -> Maybe FilePath -> a -> BL.ByteString
+encode ForceYaml        _                         = BL.fromStrict . Yaml.encode
+encode AutodetectFormat (Just fn) | isYamlPath fn = BL.fromStrict . Yaml.encode
+encode AutodetectFormat _                         = Aeson.encode
