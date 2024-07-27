@@ -1,7 +1,12 @@
-{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE RecordWildCards            #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE InstanceSigs #-}
+
 -- | Description: Represent RFC 6902 patches.
 module Data.Aeson.Patch (
   Patch(..),
@@ -18,31 +23,24 @@ module Data.Aeson.Patch (
   isTst,
 ) where
 
-import           Control.Applicative ((<|>))
-import           Control.Monad (mzero)
-import           Data.Aeson ((.:), (.=), FromJSON(parseJSON), ToJSON(toJSON), encode)
-import           Data.Aeson.Types (Value(Array, Object, String), modifyFailure, object, typeMismatch)
-import qualified Data.ByteString.Lazy.Char8 as BS
-import qualified Data.Vector                as V
-import           GHC.Generics               (Generic)
-
+import           Data.Aeson (FromJSON, ToJSON)
+import           Data.Aeson.Types (Value)
 import Data.Aeson.Pointer (Pointer)
+import qualified Autodocodec
+import Autodocodec ((.=), Autodocodec)
+import Data.HashMap.Strict (HashMap)
+import Data.Text (Text)
+import Data.Void (Void)
+import qualified Data.HashMap.Strict as HashMap
 
 -- * Patches
 
 -- | Describes the changes between two JSON documents.
 newtype Patch = Patch
     { patchOperations :: [Operation] }
-  deriving (Eq, Show, Semigroup, Monoid, Generic)
-
-instance ToJSON Patch where
-    toJSON (Patch ops) = toJSON ops
-
-instance FromJSON Patch where
-    parseJSON = modifyFailure ("Could not parse patch: " <> ) . parsePatch
-      where
-        parsePatch (Array v) = Patch <$> mapM parseJSON (V.toList v)
-        parsePatch v = typeMismatch "Array" v
+  deriving stock Show
+  deriving newtype (Eq, Semigroup, Monoid, Autodocodec.HasCodec)
+  deriving (ToJSON, FromJSON) via Autodocodec Patch
 
 -- | Modify the pointers in the 'Operation's of a 'Patch'.
 --
@@ -69,58 +67,84 @@ data Operation
     -- ^ http://tools.ietf.org/html/rfc6902#section-4.3
     | Tst { changePointer :: Pointer, changeValue :: Value }
     -- ^ http://tools.ietf.org/html/rfc6902#section-4.6
-  deriving (Eq, Show, Generic)
+  deriving stock (Eq, Show)
+  deriving (ToJSON, FromJSON) via Autodocodec Operation
 
-instance ToJSON Operation where
-    toJSON (Add p v) = object
-        [ ("op", "add")
-        , "path"  .= p
-        , "value" .= v
-        ]
-    toJSON (Cpy p f) = object
-        [ ("op", "copy")
-        , "path" .= p
-        , "from" .= f
-        ]
-    toJSON (Mov p f) = object
-        [ ("op", "move")
-        , "path" .= p
-        , "from" .= f
-        ]
-    toJSON (Rem p) = object
-        [ ("op", "remove")
-        , "path" .= p
-        ]
-    toJSON (Rep p v) = object
-        [ ("op", "replace")
-        , "path"  .= p
-        , "value" .= v
-        ]
-    toJSON (Tst p v) = object
-        [ ("op", "test")
-        , "path" .= p
-        , "value" .= v
-        ]
+instance Autodocodec.HasCodec Operation where
+  codec :: Autodocodec.JSONCodec Operation
+  codec = Autodocodec.object "JsonPatchOperation" Autodocodec.objectCodec
 
-instance FromJSON Operation where
-    parseJSON = parse
-      where
-        parse o@(Object v)
-            =   (op v "add"     *> (Add <$> v .: "path" <*> v .: "value"))
-            <|> (op v "copy"    *> (Cpy <$> v .: "path" <*> v .: "from"))
-            <|> (op v "move"    *> (Mov <$> v .: "path" <*> v .: "from"))
-            <|> (op v "remove"  *> (Rem <$> v .: "path"))
-            <|> (op v "replace" *> (Rep <$> v .: "path" <*> v .: "value"))
-            <|> (op v "test"    *> (Tst <$> v .: "path" <*> v .: "value"))
-            <|> fail ("Expected a JSON patch operation, encountered: " <> BS.unpack (encode o))
-        parse v = typeMismatch "Operation" v
-        op v n = fixed v "op" (String n)
-        fixed o n val = do
-            v' <- o .: n
-            if v' == val
-              then return v'
-              else mzero
-
+instance Autodocodec.HasObjectCodec Operation where
+  objectCodec = Autodocodec.discriminatedUnionCodec "op" enc dec where
+    enc :: Operation -> (Autodocodec.Discriminator, Autodocodec.ObjectCodec Operation ())
+    enc = \case
+      Add { changePointer, changeValue } -> (addDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) addCodec)
+      Cpy { changePointer, fromPointer } -> (copyDiscriminator, Autodocodec.mapToEncoder (changePointer, fromPointer) copyCodec)
+      Mov { changePointer, fromPointer } -> (moveDiscriminator, Autodocodec.mapToEncoder (changePointer, fromPointer) moveCodec)
+      Rem { changePointer } -> (removeDiscriminator, Autodocodec.mapToEncoder changePointer removeCodec)
+      Rep { changePointer, changeValue } -> (replaceDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) replaceCodec)
+      Tst { changePointer, changeValue } -> (testDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) testCodec)
+    dec :: HashMap Autodocodec.Discriminator (Text, Autodocodec.ObjectCodec Void Operation)
+    dec = HashMap.fromList
+      [ (addDiscriminator, (addObjName, Autodocodec.mapToDecoder (uncurry Add) addCodec))
+      , (copyDiscriminator, (copyObjName, Autodocodec.mapToDecoder (uncurry Cpy) copyCodec))
+      , (moveDiscriminator, (moveObjName, Autodocodec.mapToDecoder (uncurry Mov) moveCodec))
+      , (removeDiscriminator, (removeObjName, Autodocodec.mapToDecoder Rem removeCodec))
+      , (replaceDiscriminator, (replaceObjName, Autodocodec.mapToDecoder (uncurry Rep) replaceCodec))
+      , (testDiscriminator, (testObjName, Autodocodec.mapToDecoder (uncurry Tst) testCodec))
+      ]
+    addDiscriminator :: Text
+    addDiscriminator = "add"
+    addObjName :: Text
+    addObjName = "JsonPatchAdd"
+    addCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
+    addCodec = do
+      changePointerVal <- Autodocodec.requiredField' "path" .= fst
+      changeValueVal <- Autodocodec.requiredField' "value" .= snd
+      pure (changePointerVal, changeValueVal)
+    copyDiscriminator :: Text
+    copyDiscriminator = "copy"
+    copyObjName :: Text
+    copyObjName = "JsonPatchCopy"
+    copyCodec :: Autodocodec.JSONObjectCodec (Pointer, Pointer)
+    copyCodec = do
+      changePointerVal <- Autodocodec.requiredField' "path" .= fst
+      fromPointerVal <- Autodocodec.requiredField' "from" .= snd
+      pure (changePointerVal, fromPointerVal)
+    moveDiscriminator :: Text
+    moveDiscriminator = "move"
+    moveObjName :: Text
+    moveObjName = "JsonPatchMove"
+    moveCodec :: Autodocodec.JSONObjectCodec (Pointer, Pointer)
+    moveCodec = do
+      changePointerVal <- Autodocodec.requiredField' "path" .= fst
+      fromPointerVal <- Autodocodec.requiredField' "from" .= snd
+      pure (changePointerVal, fromPointerVal)
+    removeDiscriminator :: Text
+    removeDiscriminator = "remove"
+    removeObjName :: Text
+    removeObjName = "JsonPatchRemove"
+    removeCodec :: Autodocodec.JSONObjectCodec Pointer
+    removeCodec = Autodocodec.requiredField' "path" .= id
+    replaceDiscriminator :: Text
+    replaceDiscriminator = "replace"
+    replaceObjName :: Text
+    replaceObjName = "JsonPatchReplace"
+    replaceCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
+    replaceCodec = do
+      changePointerVal <- Autodocodec.requiredField' "path" .= fst
+      changeValueVal <- Autodocodec.requiredField' "value" .= snd
+      pure (changePointerVal, changeValueVal)
+    testDiscriminator :: Text
+    testDiscriminator = "test"
+    testObjName :: Text
+    testObjName = "JsonPatchTest"
+    testCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
+    testCodec = do
+      changePointerVal <- Autodocodec.requiredField' "path" .= fst
+      changeValueVal <- Autodocodec.requiredField' "value" .= snd
+      pure (changePointerVal, changeValueVal)
+    
 -- | Modify the 'Pointer's in an 'Operation'.
 --
 -- If the operation contains multiple pointers (i.e. a 'Mov' or 'Cpy')

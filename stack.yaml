@@ -1,4 +1,5 @@
-resolver: lts-19.1
-extra-deps: []
+resolver: lts-22.30
+extra-deps: 
+  - autodocodec-0.4.0.0
 flags: {}
 extra-package-dbs: []

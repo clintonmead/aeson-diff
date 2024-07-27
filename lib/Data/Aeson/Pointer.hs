@@ -1,6 +1,8 @@
-{-# LANGUAGE DeriveGeneric              #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings          #-}
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE LambdaCase #-}
+
 -- | Description: JSON Pointers as described in RFC 6901.
 module Data.Aeson.Pointer (
   Pointer(..),
@@ -15,37 +17,45 @@ module Data.Aeson.Pointer (
 ) where
 
 import           Data.Aeson (encode)
-import qualified Data.Aeson.Key (Key)
 import           Data.Aeson.Key (fromText, toText)
 import qualified Data.Aeson.KeyMap as HM
-import           Data.Aeson.Types (FromJSON(parseJSON), Parser, Result(Error), ToJSON(toJSON), Value(Array, Object, Number, String), modifyFailure)
+import           Data.Aeson.Types (FromJSON, Parser, Result(Error), ToJSON, Value(Array, Object))
 import qualified Data.ByteString.Lazy.Char8 as BS
 import           Data.Char                  (isNumber)
-import           Data.Scientific            (toBoundedInteger)
 import           Data.Text                  (Text)
 import qualified Data.Text                  as T
 import qualified Data.Vector                as V
-import           GHC.Generics               (Generic)
+import qualified Autodocodec
+import Autodocodec (Autodocodec)
+import qualified Data.Aeson.Types as Aeson
+import qualified Data.Aeson.Key as AesonKey
 
 -- * Patch components
 
 -- | Path components to traverse a single layer of a JSON document.
 data Key
-    = OKey Data.Aeson.Key.Key -- ^ Traverse a 'Value' with an 'Object' constructor.
+    = OKey Aeson.Key -- ^ Traverse a 'Value' with an 'Object' constructor.
     | AKey Int                -- ^ Traverse a 'Value' with an 'Array' constructor.
-  deriving (Eq, Ord, Show, Generic)
+    -- todo: add constructor 'AEnd' to represent '-': the end of the array
+  deriving stock (Eq, Show)
+  deriving (ToJSON, FromJSON) via (Autodocodec Key)
 
-instance ToJSON Key where
-    toJSON (OKey t) = toJSON t
-    toJSON (AKey a) = Number . fromInteger . toInteger $ a
-
-instance FromJSON Key where
-    parseJSON (String t) = return . OKey . fromText $ t
-    parseJSON (Number n) =
-        case toBoundedInteger n of
-            Nothing -> fail "A numeric key must be a positive whole number."
-            Just n' -> return $ AKey n'
-    parseJSON _ = fail "A key element must be a number or a string."
+instance Autodocodec.HasCodec Key where
+  codec = Autodocodec.dimapCodec eitherToKey keyToEither eitherKeyCodec where
+    eitherToKey :: Either Aeson.Key Int -> Key
+    eitherToKey = \case
+      Left k -> OKey k
+      Right i -> AKey i
+    keyToEither :: Key -> Either Aeson.Key Int
+    keyToEither = \case
+      OKey k -> Left k
+      AKey i -> Right i
+    eitherKeyCodec :: Autodocodec.JSONCodec (Either Aeson.Key Int)
+    eitherKeyCodec = Autodocodec.eitherCodec aesonKeyCodec arrayCodec
+    aesonKeyCodec :: Autodocodec.JSONCodec Aeson.Key
+    aesonKeyCodec = Autodocodec.dimapCodec AesonKey.fromText AesonKey.toText Autodocodec.codec
+    arrayCodec :: Autodocodec.JSONCodec Int
+    arrayCodec = Autodocodec.boundedIntegralCodec
 
 formatKey :: Key -> Text
 formatKey (AKey i) = T.pack (show i)
@@ -65,7 +75,9 @@ type Path = [Key]
 --
 -- Defined in RFC 6901 <http://tools.ietf.org/html/rfc6901>
 newtype Pointer = Pointer { pointerPath :: Path }
-  deriving (Eq, Ord, Show, Semigroup, Monoid, Generic)
+  deriving stock (Show)
+  deriving newtype (Eq, Semigroup, Monoid)
+  deriving (ToJSON, FromJSON) via (Autodocodec Pointer)
 
 -- | Format a 'Pointer' as described in RFC 6901.
 --
@@ -116,15 +128,8 @@ parsePointer t
       | T.all isNumber t = return (AKey (read $ T.unpack t))
       | otherwise        = return . OKey . fromText $ unesc t
 
-instance ToJSON Pointer where
-    toJSON pointer =
-        String (formatPointer pointer)
-
-instance FromJSON Pointer where
-    parseJSON = modifyFailure ("Could not parse JSON pointer: " <>) . parse
-      where
-        parse (String t) = parsePointer t
-        parse _ = fail "A JSON pointer must be a string."
+instance Autodocodec.HasCodec Pointer where
+  codec = Autodocodec.bimapCodec (Aeson.parseEither parsePointer) formatPointer Autodocodec.codec
 
 -- | Follow a 'Pointer' through a JSON document as described in RFC 6901.
 get :: Pointer -> Value -> Result Value
