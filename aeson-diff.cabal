@@ -36,7 +36,7 @@ library
                      , Data.Aeson.Pointer
   build-depends:       base >=4.11.1 && <5
                      , aeson >= 2.0.3
-                     , autodocodec >= 0.3.0.0
+                     , autodocodec
                      , bytestring >= 0.10
                      , edit-distance-vector
                      , scientific

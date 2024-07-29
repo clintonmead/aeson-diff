@@ -1,0 +1,28 @@
+name:                aeson-diff-openapi3
+version:             1.2.0.0
+synopsis:            An orphan instance for `aeson-diff`'s `Patch` type for `openapi3`'s `Schema` type.
+description:
+  .
+  .
+homepage:            https://github.com/clintonmead/aeson-diff
+license:             BSD3
+author:              Clinton Mead <clintonmead@gmail.com>
+maintainer:          Clinton Mead <clintonmead@gmail.com>
+copyright:           (c) 2024 Clinton Mead
+category:            JSON, Web
+build-type:          Simple
+cabal-version:       2.0
+  
+source-repository      HEAD
+  type: git
+  location: https://github.com/clintonmead/aeson-diff
+
+library
+  default-language:    GHC2021
+  hs-source-dirs:      src
+  exposed-modules:     Data.Aeson.Patch.OpenApi.Orphans
+  build-depends:       base
+                     , aeson-diff
+                     , openapi3
+                     , autodocodec-openapi3
+  default-extensions:  DerivingVia

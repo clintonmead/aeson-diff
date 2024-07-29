@@ -1,5 +1,12 @@
 resolver: lts-22.30
 extra-deps: 
-  - autodocodec-0.4.0.0
-flags: {}
-extra-package-dbs: []
+  - git: https://github.com/NorfairKing/autodocodec
+    commit: 4b5c728c7bcf111c833f251a6b87e5be41c305c5
+    subdirs:
+      - autodocodec
+      - autodocodec-swagger2
+      - autodocodec-openapi3
+packages:
+  - .
+  - orphans/aeson-diff-swagger2
+  - orphans/aeson-diff-openapi3
