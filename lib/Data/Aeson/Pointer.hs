@@ -13,7 +13,7 @@ module Data.Aeson.Pointer (
   parsePointer,
   -- * Using pointers
   get,
-  pointerFailure,
+  pointerFailure
 ) where
 
 import           Data.Aeson (encode)
@@ -24,41 +24,42 @@ import qualified Data.ByteString.Lazy.Char8 as BS
 import           Data.Char                  (isNumber)
 import           Data.Text                  (Text)
 import qualified Data.Text                  as T
-import qualified Data.Vector                as V
 import qualified Autodocodec
 import Autodocodec (Autodocodec)
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.Aeson.Key as AesonKey
+import Data.Coerce (coerce)
+import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (ArrayOffset), (!?-))
 
 -- * Patch components
 
 -- | Path components to traverse a single layer of a JSON document.
 data Key
     = OKey Aeson.Key -- ^ Traverse a 'Value' with an 'Object' constructor.
-    | AKey Int                -- ^ Traverse a 'Value' with an 'Array' constructor.
-    -- todo: add constructor 'AEnd' to represent '-': the end of the array
+    | AKey ArrayOffset                -- ^ Traverse a 'Value' with an 'Array' constructor.
   deriving stock (Eq, Show)
   deriving (ToJSON, FromJSON) via (Autodocodec Key)
 
 instance Autodocodec.HasCodec Key where
   codec = Autodocodec.dimapCodec eitherToKey keyToEither eitherKeyCodec where
-    eitherToKey :: Either Aeson.Key Int -> Key
+    eitherToKey :: Either Aeson.Key ArrayOffset -> Key
     eitherToKey = \case
       Left k -> OKey k
       Right i -> AKey i
-    keyToEither :: Key -> Either Aeson.Key Int
+    keyToEither :: Key -> Either Aeson.Key ArrayOffset
     keyToEither = \case
       OKey k -> Left k
       AKey i -> Right i
-    eitherKeyCodec :: Autodocodec.JSONCodec (Either Aeson.Key Int)
+    eitherKeyCodec :: Autodocodec.JSONCodec (Either Aeson.Key ArrayOffset)
     eitherKeyCodec = Autodocodec.eitherCodec aesonKeyCodec arrayCodec
     aesonKeyCodec :: Autodocodec.JSONCodec Aeson.Key
     aesonKeyCodec = Autodocodec.dimapCodec AesonKey.fromText AesonKey.toText Autodocodec.codec
-    arrayCodec :: Autodocodec.JSONCodec Int
-    arrayCodec = Autodocodec.boundedIntegralCodec
+    arrayCodec :: Autodocodec.JSONCodec ArrayOffset
+    arrayCodec = coerce (Autodocodec.boundedIntegralCodec :: Autodocodec.JSONCodec Int)
 
 formatKey :: Key -> Text
-formatKey (AKey i) = T.pack (show i)
+-- todo: This is wrong as it doesn't handle negative keys
+formatKey (AKey (ArrayOffset i)) = T.pack (show i)
 formatKey (OKey t) = T.concatMap esc $ toText t
   where
     esc :: Char -> Text
@@ -89,7 +90,7 @@ newtype Pointer = Pointer { pointerPath :: Path }
 -- "/ "
 -- >>> formatPointer (Pointer [OKey "foo"])
 -- "/foo"
--- >>> formatPointer (Pointer [OKey "foo", AKey 0])
+-- >>> formatPointer (Pointer [OKey "foo", AKey (ArrayOffset 0)])
 -- "/foo/0"
 -- >>> formatPointer (Pointer [OKey "a/b"])
 -- "/a~1b"
@@ -125,7 +126,9 @@ parsePointer t
       in T.concat $ take 1 l <> fmap step (tail l)
     key t
       | T.null t         = fail "JSON components must not be empty."
-      | T.all isNumber t = return (AKey (read $ T.unpack t))
+      -- todo: Although this is technically safe here as `isNumber` should prevent any failures of `read`,
+      -- probably better not to use `read` here and instead "parse, don't validate".
+      | T.all isNumber t = return (AKey (ArrayOffset (read $ T.unpack t)))
       | otherwise        = return . OKey . fromText $ unesc t
 
 instance Autodocodec.HasCodec Pointer where
@@ -133,12 +136,16 @@ instance Autodocodec.HasCodec Pointer where
 
 -- | Follow a 'Pointer' through a JSON document as described in RFC 6901.
 get :: Pointer -> Value -> Result Value
-get (Pointer []) v = return v
-get (Pointer (AKey i : path)) (Array v) =
-  maybe (fail "") return (v V.!? i) >>= get (Pointer path)
-get (Pointer (OKey n : path)) (Object v) =
-  maybe (fail "") return (HM.lookup n v) >>= get (Pointer path)
-get pointer value = pointerFailure pointer value
+get (Pointer pointer) v = case pointer of
+  [] -> return v
+  (key : rest) -> case key of
+    OKey k -> case v of
+      Object o -> maybe (fail "") (get (Pointer rest)) (HM.lookup k o)
+      _ -> pointerFailure (Pointer pointer) v
+    AKey i -> case v of
+      Array a -> maybe (fail "") (get (Pointer rest)) (a !?- i)
+      _ -> pointerFailure (Pointer pointer) v
+
 
 -- | Report an error while following a pointer.
 pointerFailure :: Pointer -> Value -> Result a

@@ -35,6 +35,7 @@ import           Data.Vector.Distance       (Params(Params, equivalent, position
 
 import Data.Aeson.Patch                     (Operation(Add, Cpy, Mov, Rem, Rep, Tst), Patch(Patch), changePointer, changeValue, modifyPointer)
 import Data.Aeson.Pointer                   (Key(AKey, OKey), Pointer(Pointer), formatPointer, get, pointerFailure, pointerPath)
+import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (PosOffset, NegOffset, ArrayOffset), toAbsArrayOffset, (!?-), (//-))
 
 -- * Configuration
 
@@ -157,9 +158,9 @@ diff' cfg v v' = Patch (worker mempty v v')
         params = Params{equivalent, delete, insert, substitute, cost, positionOffset}
         equivalent :: Value -> Value -> Bool
         equivalent = (==)
-        delete i = del cfg (Pointer [AKey i])
-        insert i = ins cfg (Pointer [AKey i])
-        substitute i = worker (Pointer [AKey i])
+        delete i = del cfg (Pointer [AKey (ArrayOffset i)])
+        insert i = ins cfg (Pointer [AKey (ArrayOffset i)])
+        substitute i = worker (Pointer [AKey (ArrayOffset i)])
         cost :: [Operation] -> Sum Int
         cost = Sum . sum . fmap operationCost
         -- Position is advanced by grouping operations with same "head" index:
@@ -251,7 +252,7 @@ applyAdd pointer = go pointer
             fn (Just d) = Just <$> go (Pointer path) v' d
         in Object <$> hmModify n fn o
     go (Pointer (OKey n : path)) v' array@(Array v)
-        | n == "-" = go (Pointer (AKey (V.length v) : path)) v' array
+        | n == "-" = go (Pointer (AKey (ArrayOffset (V.length v)) : path)) v' array
     go path _ v = pointerFailure path v
 
 -- | Apply a 'Rem' operation to a document.
@@ -285,7 +286,7 @@ applyRem from@(Pointer path) = go path
         in Object <$> hmModify n fn m
     -- Dodgy hack for "-" key which means "the end of the array".
     go (OKey n : path) array@(Array v)
-        | n == "-" = go (AKey (V.length v) : path) array
+        | n == "-" = go (AKey (ArrayOffset (V.length v)) : path) array
     -- Type mismatch: clearly the thing we're deleting isn't here.
     go _path value = pointerFailure from value
 
@@ -335,19 +336,25 @@ applyTst path v doc = do
 -- and "Data.Aeson.KeyMap" modules.
 
 -- | Delete an element in a vector.
-vDelete :: Int -> Vector a -> Vector a
-vDelete i v =
-    let l = V.length v
-    in V.slice 0 i v <> V.slice (i + 1) (l - i - 1) v
+vDelete :: ArrayOffset -> Vector a -> Vector a
+vDelete i' v =
+    let
+      i = toAbsArrayOffset v i' 
+      l = V.length v
+    in 
+      V.slice 0 i v <> V.slice (i + 1) (l - i - 1) v
 
 -- | Insert an element into a vector.
-vInsert :: Int -> a -> Vector a -> Vector a
-vInsert i a v
-    | i <= 0          = V.cons a v
-    | V.length v <= i = V.snoc v a
-    | otherwise       = V.slice 0 i v
-                      <> V.singleton a
-                      <> V.slice i (V.length v - i) v
+vInsert :: ArrayOffset -> a -> Vector a -> Vector a
+vInsert i' a v =
+    let
+      i = case i' of
+        PosOffset i -> i
+        NegOffset i -> V.length v + i + 1
+    in
+      V.slice 0 i v
+      <> V.singleton a
+      <> V.slice i (V.length v - i) v
 
 -- | Modify the element at an index in a 'Vector'.
 --
@@ -362,18 +369,18 @@ vInsert i a v
 -- - insert a new element; or
 -- - replace an existing element.
 vModify
-    :: Int
+    :: ArrayOffset
     -> (Maybe a -> Result (Maybe a))
     -> Vector a
     -> Result (Vector a)
 vModify i f v =
-    let a = v V.!? i
+    let a = v !?- i
         a' = f a
     in case (a, a') of
         (Nothing, Success Nothing ) -> return v
         (Just _ , Success Nothing ) -> return (vDelete i v)
         (Nothing, Success (Just n)) -> return (vInsert i n v)
-        (Just _ , Success (Just n)) -> return (V.update v (V.singleton (i, n)))
+        (Just _ , Success (Just n)) -> return (v //- [(i, n)])
         (_      , Error   e       ) -> Error e
 
 -- | Modify the value associated with a key in a 'KeyMap'.

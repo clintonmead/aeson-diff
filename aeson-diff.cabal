@@ -29,11 +29,12 @@ source-repository      HEAD
   location: https://github.com/clintonmead/aeson-diff
 
 library
-  default-language:    Haskell2010
+  default-language:    GHC2021
   hs-source-dirs:      lib
   exposed-modules:     Data.Aeson.Diff
                      , Data.Aeson.Patch
                      , Data.Aeson.Pointer
+                     , Data.Aeson.Pointer.ArrayOffset
   build-depends:       base >=4.11.1 && <5
                      , aeson >= 2.0.3
                      , autodocodec
@@ -43,6 +44,11 @@ library
                      , text
                      , unordered-containers
                      , vector
+  default-extensions:  PatternSynonyms
+                     , ViewPatterns
+                     , LambdaCase
+                     , DerivingStrategies
+
 
 executable             json-diff
   default-language:    Haskell2010
