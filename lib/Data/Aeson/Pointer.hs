@@ -59,7 +59,9 @@ instance Autodocodec.HasCodec Key where
 
 formatKey :: Key -> Text
 -- todo: This is wrong as it doesn't handle negative keys
-formatKey (AKey (ArrayOffset i)) = T.pack (show i)
+formatKey (AKey (ArrayOffset i)) = case i == -1 of 
+  True -> "-"
+  False -> T.pack (show i)
 formatKey (OKey t) = T.concatMap esc $ toText t
   where
     esc :: Char -> Text
@@ -106,6 +108,8 @@ newtype Pointer = Pointer { pointerPath :: Path }
 -- "/k\"l"
 -- >>> formatPointer (Pointer [OKey "m~n"])
 -- "/m~0n"
+-- >>> formatPointer (Pointer [OKey "foo", AKey (ArrayOffset (-1))])
+-- "/foo/-"
 formatPointer :: Pointer -> Text
 formatPointer (Pointer []) = ""
 formatPointer (Pointer path) = "/" <> T.intercalate "/" (formatKey <$> path)
@@ -129,7 +133,9 @@ parsePointer t
       -- todo: Although this is technically safe here as `isNumber` should prevent any failures of `read`,
       -- probably better not to use `read` here and instead "parse, don't validate".
       | T.all isNumber t = return (AKey (ArrayOffset (read $ T.unpack t)))
-      | otherwise        = return . OKey . fromText $ unesc t
+      | otherwise        = pure $ case t == "-" of
+          True -> AKey (ArrayOffset (-1))
+          False -> OKey . fromText $ unesc t
 
 instance Autodocodec.HasCodec Pointer where
   codec = Autodocodec.bimapCodec (Aeson.parseEither parsePointer) formatPointer Autodocodec.codec

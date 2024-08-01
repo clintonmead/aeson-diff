@@ -251,8 +251,6 @@ applyAdd pointer = go pointer
             fn Nothing  = cannot "insert" "object" n pointer
             fn (Just d) = Just <$> go (Pointer path) v' d
         in Object <$> hmModify n fn o
-    go (Pointer (OKey n : path)) v' array@(Array v)
-        | n == "-" = go (Pointer (AKey (ArrayOffset (V.length v)) : path)) v' array
     go path _ v = pointerFailure path v
 
 -- | Apply a 'Rem' operation to a document.
@@ -284,9 +282,6 @@ applyRem from@(Pointer path) = go path
             fn Nothing  = cannot "traverse" "object" n from
             fn (Just o) = Just <$> go path o
         in Object <$> hmModify n fn m
-    -- Dodgy hack for "-" key which means "the end of the array".
-    go (OKey n : path) array@(Array v)
-        | n == "-" = go (AKey (ArrayOffset (V.length v)) : path) array
     -- Type mismatch: clearly the thing we're deleting isn't here.
     go _path value = pointerFailure from value
 
@@ -349,8 +344,8 @@ vInsert :: ArrayOffset -> a -> Vector a -> Vector a
 vInsert i' a v =
     let
       i = case i' of
-        PosOffset i -> i
-        NegOffset i -> V.length v + i + 1
+        PosOffset n -> n
+        NegOffset n -> V.length v + 1 + n
     in
       V.slice 0 i v
       <> V.singleton a
