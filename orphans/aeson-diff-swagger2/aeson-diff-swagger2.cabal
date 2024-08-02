@@ -23,6 +23,7 @@ library
   exposed-modules:     Data.Aeson.Patch.Swagger.Orphans
   build-depends:       base
                      , aeson-diff
-                     , swagger2
+                     , autodocodec
                      , autodocodec-swagger2
+                     , swagger2
   default-extensions:  DerivingVia

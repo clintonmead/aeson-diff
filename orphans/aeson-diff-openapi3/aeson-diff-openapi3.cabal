@@ -23,6 +23,7 @@ library
   exposed-modules:     Data.Aeson.Patch.OpenApi.Orphans
   build-depends:       base
                      , aeson-diff
-                     , openapi3
+                     , autodocodec
                      , autodocodec-openapi3
+                     , openapi3
   default-extensions:  DerivingVia

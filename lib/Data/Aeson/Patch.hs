@@ -1,16 +1,11 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE RecordWildCards            #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 -- | Description: Represent RFC 6902 patches.
 module Data.Aeson.Patch (
   Patch(..),
+  Patch'(..),
   Operation(..),
+  Operation'(..),
   -- * Modification
   modifyPointer,
   modifyPointers,
@@ -23,15 +18,16 @@ module Data.Aeson.Patch (
   isTst,
 ) where
 
-import           Data.Aeson (FromJSON, ToJSON)
-import           Data.Aeson.Types (Value)
-import Data.Aeson.Pointer (Pointer)
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson.Types (Value)
+import Data.Aeson.Pointer (Pointer, ExpectedFormat (RFC6901Format, ArrayFormat), ParsingStrictness (StrictParsing, LenientParsing), Pointer'(..))
 import qualified Autodocodec
 import Autodocodec ((.=), Autodocodec)
 import Data.HashMap.Strict (HashMap)
 import Data.Text (Text)
 import Data.Void (Void)
 import qualified Data.HashMap.Strict as HashMap
+import Data.Coerce (coerce)
 
 -- * Patches
 
@@ -39,8 +35,20 @@ import qualified Data.HashMap.Strict as HashMap
 newtype Patch = Patch
     { patchOperations :: [Operation] }
   deriving stock Show
-  deriving newtype (Eq, Semigroup, Monoid, Autodocodec.HasCodec)
-  deriving (ToJSON, FromJSON) via Autodocodec Patch
+  deriving newtype (Eq, Semigroup, Monoid)
+  deriving (ToJSON, FromJSON) via Autodocodec (Patch' RFC6901Format StrictParsing)
+
+-- | A newtype wrapper for `Patch` which allows us to specify the expected format of the pointers in the patch.
+--
+-- See `Pointer'` for more information.
+newtype Patch' (expectedFormat :: ExpectedFormat) (parsingStrictness :: ParsingStrictness) = Patch' Patch
+
+deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance 
+  Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => ToJSON (Patch' expectedFormat parsingStrictness)
+deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance 
+  Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => FromJSON (Patch' expectedFormat parsingStrictness)
+deriving via [Operation' expectedFormat parsingStrictness] instance 
+  Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => Autodocodec.HasCodec (Patch' expectedFormat parsingStrictness)
 
 -- | Modify the pointers in the 'Operation's of a 'Patch'.
 --
@@ -68,83 +76,120 @@ data Operation
     | Tst { changePointer :: Pointer, changeValue :: Value }
     -- ^ http://tools.ietf.org/html/rfc6902#section-4.6
   deriving stock (Eq, Show)
-  deriving (ToJSON, FromJSON) via Autodocodec Operation
+  deriving (ToJSON, FromJSON) via Autodocodec (Operation' RFC6901Format StrictParsing)
 
-instance Autodocodec.HasCodec Operation where
-  codec :: Autodocodec.JSONCodec Operation
+-- | A newtype wrapper for `Operation` which allows us to specify the expected format of the pointers in the patch.
+--
+-- See `Pointer'` for more information.
+newtype Operation' (expectedFormat :: ExpectedFormat) (parsingStrictness :: ParsingStrictness) = Operation' Operation
+
+instance Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => Autodocodec.HasCodec (Operation' expectedFormat parsingStrictness) where
   codec = Autodocodec.object "JsonPatchOperation" Autodocodec.objectCodec
 
-instance Autodocodec.HasObjectCodec Operation where
-  objectCodec = Autodocodec.discriminatedUnionCodec "op" enc dec where
-    enc :: Operation -> (Autodocodec.Discriminator, Autodocodec.ObjectCodec Operation ())
-    enc = \case
-      Add { changePointer, changeValue } -> (addDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) addCodec)
-      Cpy { changePointer, fromPointer } -> (copyDiscriminator, Autodocodec.mapToEncoder (changePointer, fromPointer) copyCodec)
-      Mov { changePointer, fromPointer } -> (moveDiscriminator, Autodocodec.mapToEncoder (changePointer, fromPointer) moveCodec)
-      Rem { changePointer } -> (removeDiscriminator, Autodocodec.mapToEncoder changePointer removeCodec)
-      Rep { changePointer, changeValue } -> (replaceDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) replaceCodec)
-      Tst { changePointer, changeValue } -> (testDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) testCodec)
-    dec :: HashMap Autodocodec.Discriminator (Text, Autodocodec.ObjectCodec Void Operation)
-    dec = HashMap.fromList
-      [ (addDiscriminator, (addObjName, Autodocodec.mapToDecoder (uncurry Add) addCodec))
-      , (copyDiscriminator, (copyObjName, Autodocodec.mapToDecoder (uncurry Cpy) copyCodec))
-      , (moveDiscriminator, (moveObjName, Autodocodec.mapToDecoder (uncurry Mov) moveCodec))
-      , (removeDiscriminator, (removeObjName, Autodocodec.mapToDecoder Rem removeCodec))
-      , (replaceDiscriminator, (replaceObjName, Autodocodec.mapToDecoder (uncurry Rep) replaceCodec))
-      , (testDiscriminator, (testObjName, Autodocodec.mapToDecoder (uncurry Tst) testCodec))
-      ]
-    addDiscriminator :: Text
-    addDiscriminator = "add"
-    addObjName :: Text
-    addObjName = "JsonPatchAdd"
-    addCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
-    addCodec = do
+-- Here we explicitly define instances for all the possible combinations of expected format and parsing strictness.
+-- We do this then this will compile to 4 separate codec objects, each of which will only be only computed once.
+-- If we had a more general instance, like:
+--
+-- instance Autodocodec.HasCodec (Pointer' expectedFormat parsingStrictness) => 
+--   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness)
+--
+-- `codec` for this instance would implicitly be a function (because we'll need to pass it an HasCodec dictionary for Pointer'),
+-- and as a result, it's result will not be cached and recomputed each time it's called.
+--
+-- As making an object codec for `Operation'` involves things like creating a hashmap, whilst it's probably not a big deal
+-- it's nice if we can do all this work once instead of repeating it every time someone calls `toJSON` or `parseJSON`.
+--
+-- See: https://stackoverflow.com/questions/77056264/caching-an-expensive-to-compute-result-in-a-class-instance
+-- for details
+instance Autodocodec.HasObjectCodec (Operation' RFC6901Format StrictParsing) where objectCodec = operationObjectCodec
+instance Autodocodec.HasObjectCodec (Operation' RFC6901Format LenientParsing) where objectCodec = operationObjectCodec
+instance Autodocodec.HasObjectCodec (Operation' ArrayFormat StrictParsing) where objectCodec = operationObjectCodec
+instance Autodocodec.HasObjectCodec (Operation' ArrayFormat LenientParsing) where objectCodec = operationObjectCodec
+
+operationObjectCodec :: forall expectedFormat parsingStrictness. 
+  Autodocodec.HasCodec (Pointer' expectedFormat parsingStrictness) => Autodocodec.JSONObjectCodec (Operation' expectedFormat parsingStrictness)
+operationObjectCodec = Autodocodec.discriminatedUnionCodec "op" enc dec where
+  enc :: Operation' expectedFormat parsingStrictness -> (Autodocodec.Discriminator, Autodocodec.ObjectCodec (Operation' expectedFormat parsingStrictness) ())
+  enc (Operation' o) = case o of 
+    Add { changePointer, changeValue } -> (addDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) addCodec)
+    Cpy { changePointer, fromPointer } -> (copyDiscriminator, Autodocodec.mapToEncoder (changePointer, fromPointer) copyCodec)
+    Mov { changePointer, fromPointer } -> (moveDiscriminator, Autodocodec.mapToEncoder (changePointer, fromPointer) moveCodec)
+    Rem { changePointer } -> (removeDiscriminator, Autodocodec.mapToEncoder changePointer removeCodec)
+    Rep { changePointer, changeValue } -> (replaceDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) replaceCodec)
+    Tst { changePointer, changeValue } -> (testDiscriminator, Autodocodec.mapToEncoder (changePointer, changeValue) testCodec)
+  dec :: HashMap Autodocodec.Discriminator (Text, Autodocodec.ObjectCodec Void  (Operation' expectedFormat parsingStrictness))
+  dec = HashMap.fromList
+    [ (addDiscriminator, (addObjName, Autodocodec.mapToDecoder (Operation' . uncurry Add) addCodec))
+    , (copyDiscriminator, (copyObjName, Autodocodec.mapToDecoder (Operation' . uncurry Cpy) copyCodec))
+    , (moveDiscriminator, (moveObjName, Autodocodec.mapToDecoder (Operation' . uncurry Mov) moveCodec))
+    , (removeDiscriminator, (removeObjName, Autodocodec.mapToDecoder (Operation' . Rem) removeCodec))
+    , (replaceDiscriminator, (replaceObjName, Autodocodec.mapToDecoder (Operation' . uncurry Rep) replaceCodec))
+    , (testDiscriminator, (testObjName, Autodocodec.mapToDecoder (Operation' . uncurry Tst) testCodec))
+    ]
+  addDiscriminator :: Text
+  addDiscriminator = "add"
+  addObjName :: Text
+  addObjName = "JsonPatchAdd"
+  addCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
+  addCodec = coerce addCodec' where 
+    addCodec' :: Autodocodec.JSONObjectCodec (Pointer' expectedFormat parsingStrictness, Value)
+    addCodec' = do
       changePointerVal <- Autodocodec.requiredField' "path" .= fst
       changeValueVal <- Autodocodec.requiredField' "value" .= snd
       pure (changePointerVal, changeValueVal)
-    copyDiscriminator :: Text
-    copyDiscriminator = "copy"
-    copyObjName :: Text
-    copyObjName = "JsonPatchCopy"
-    copyCodec :: Autodocodec.JSONObjectCodec (Pointer, Pointer)
-    copyCodec = do
+  copyDiscriminator :: Text
+  copyDiscriminator = "copy"
+  copyObjName :: Text
+  copyObjName = "JsonPatchCopy"
+  copyCodec :: Autodocodec.JSONObjectCodec (Pointer, Pointer)
+  copyCodec = coerce copyCodec' where
+    copyCodec' :: Autodocodec.JSONObjectCodec (Pointer' expectedFormat parsingStrictness, Pointer' expectedFormat parsingStrictness)
+    copyCodec' = do
       changePointerVal <- Autodocodec.requiredField' "path" .= fst
       fromPointerVal <- Autodocodec.requiredField' "from" .= snd
       pure (changePointerVal, fromPointerVal)
-    moveDiscriminator :: Text
-    moveDiscriminator = "move"
-    moveObjName :: Text
-    moveObjName = "JsonPatchMove"
-    moveCodec :: Autodocodec.JSONObjectCodec (Pointer, Pointer)
-    moveCodec = do
+  moveDiscriminator :: Text
+  moveDiscriminator = "move"
+  moveObjName :: Text
+  moveObjName = "JsonPatchMove"
+  moveCodec :: Autodocodec.JSONObjectCodec (Pointer, Pointer)
+  moveCodec = coerce moveCodec' where
+    moveCodec' :: Autodocodec.JSONObjectCodec (Pointer' expectedFormat parsingStrictness, Pointer' expectedFormat parsingStrictness)
+    moveCodec' = do
       changePointerVal <- Autodocodec.requiredField' "path" .= fst
       fromPointerVal <- Autodocodec.requiredField' "from" .= snd
       pure (changePointerVal, fromPointerVal)
-    removeDiscriminator :: Text
-    removeDiscriminator = "remove"
-    removeObjName :: Text
-    removeObjName = "JsonPatchRemove"
-    removeCodec :: Autodocodec.JSONObjectCodec Pointer
-    removeCodec = Autodocodec.requiredField' "path" .= id
-    replaceDiscriminator :: Text
-    replaceDiscriminator = "replace"
-    replaceObjName :: Text
-    replaceObjName = "JsonPatchReplace"
-    replaceCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
-    replaceCodec = do
+  removeDiscriminator :: Text
+  removeDiscriminator = "remove"
+  removeObjName :: Text
+  removeObjName = "JsonPatchRemove"
+  removeCodec :: Autodocodec.JSONObjectCodec Pointer
+  removeCodec = coerce removeCodec' where
+    removeCodec' :: Autodocodec.JSONObjectCodec (Pointer' expectedFormat parsingStrictness)
+    removeCodec' = Autodocodec.requiredField' "path" .= id
+  replaceDiscriminator :: Text
+  replaceDiscriminator = "replace"
+  replaceObjName :: Text
+  replaceObjName = "JsonPatchReplace"
+  replaceCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
+  replaceCodec = coerce replaceCodec' where
+    replaceCodec' :: Autodocodec.JSONObjectCodec (Pointer' expectedFormat parsingStrictness, Value)
+    replaceCodec' = do
       changePointerVal <- Autodocodec.requiredField' "path" .= fst
       changeValueVal <- Autodocodec.requiredField' "value" .= snd
       pure (changePointerVal, changeValueVal)
-    testDiscriminator :: Text
-    testDiscriminator = "test"
-    testObjName :: Text
-    testObjName = "JsonPatchTest"
-    testCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
-    testCodec = do
+  testDiscriminator :: Text
+  testDiscriminator = "test"
+  testObjName :: Text
+  testObjName = "JsonPatchTest"
+  testCodec :: Autodocodec.JSONObjectCodec (Pointer, Value)
+  testCodec = coerce testCodec' where
+    testCodec' :: Autodocodec.JSONObjectCodec (Pointer' expectedFormat parsingStrictness, Value)
+    testCodec' = do
       changePointerVal <- Autodocodec.requiredField' "path" .= fst
       changeValueVal <- Autodocodec.requiredField' "value" .= snd
       pure (changePointerVal, changeValueVal)
-    
+
 -- | Modify the 'Pointer's in an 'Operation'.
 --
 -- If the operation contains multiple pointers (i.e. a 'Mov' or 'Cpy')
