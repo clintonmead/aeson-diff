@@ -1,9 +1,19 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE OverloadedStrings          #-}
-{-# LANGUAGE DerivingVia #-}
-{-# LANGUAGE LambdaCase #-}
-
--- | Description: JSON Pointers as described in RFC 6901.
+-- | Description: Two versions of JSON Pointers:
+-- 
+-- 1. As described in RFC 6901.
+-- 2. As an array of path elements.
+--
+-- The RFC 6901 format, whilst visually a nicer human readable format (as it looks like a standard directory string)
+-- is more tricky to work with programmatically, as generating paths requires concatenating strings and escaping
+-- special characters. 
+--
+-- Moreover, the RFC 6901 escaping rules are unique to the RFC 6901 format. 
+--
+-- As an alternative to this format, we also provide a format for pointers that is simply a JSON array of path elements.
+--
+-- This format is easier to work with programmatically, as escaping is no longer required, 
+-- and will generate Swagger/OpenAPI indicating that an array of path elements is required. 
+-- The only escaping required is standard JSON escaping. 
 module Data.Aeson.Pointer (
   Pointer(..),
   Key(..),
@@ -13,7 +23,10 @@ module Data.Aeson.Pointer (
   parsePointer,
   -- * Using pointers
   get,
-  pointerFailure
+  pointerFailure,
+  Pointer'(..),
+  ExpectedFormat(..),
+  ParsingStrictness(..),
 ) where
 
 import           Data.Aeson (encode)
@@ -58,7 +71,6 @@ instance Autodocodec.HasCodec Key where
     arrayCodec = coerce (Autodocodec.boundedIntegralCodec :: Autodocodec.JSONCodec Int)
 
 formatKey :: Key -> Text
--- todo: This is wrong as it doesn't handle negative keys
 formatKey (AKey (ArrayOffset i)) = case i == -1 of 
   True -> "-"
   False -> T.pack (show i)
@@ -75,12 +87,10 @@ formatKey (OKey t) = T.concatMap esc $ toText t
 type Path = [Key]
 
 -- | Pointer to a location in a JSON document.
---
--- Defined in RFC 6901 <http://tools.ietf.org/html/rfc6901>
 newtype Pointer = Pointer { pointerPath :: Path }
   deriving stock (Show)
   deriving newtype (Eq, Semigroup, Monoid)
-  deriving (ToJSON, FromJSON) via (Autodocodec Pointer)
+  deriving (ToJSON, FromJSON) via (Autodocodec StandardPointer)
 
 -- | Format a 'Pointer' as described in RFC 6901.
 --
@@ -137,9 +147,6 @@ parsePointer t
           True -> AKey (ArrayOffset (-1))
           False -> OKey . fromText $ unesc t
 
-instance Autodocodec.HasCodec Pointer where
-  codec = Autodocodec.bimapCodec (Aeson.parseEither parsePointer) formatPointer Autodocodec.codec
-
 -- | Follow a 'Pointer' through a JSON document as described in RFC 6901.
 get :: Pointer -> Value -> Result Value
 get (Pointer pointer) v = case pointer of
@@ -165,6 +172,74 @@ pointerFailure (Pointer path@(key:_)) value =
            (AKey _) -> "array"
            (OKey _) -> "object"
 
+--
+
+-- | Determines how we format the pointer. 
+-- 
+-- - `RFC6901Format` to format the pointer as described in RFC 6901 <http://tools.ietf.org/html/rfc6901>
+-- - `ArrayFormat` to format the pointer as a JSON array of path elements.
+type data ExpectedFormat = RFC6901Format | ArrayFormat
+
+-- | Determines how strictly we parse the pointer based on the expected format.
+-- 
+-- - `StrictParsing` to parse the pointer strictly according to the expected format.
+-- - `LenientParsing` to parse the pointer leniently, allowing for the pointer to be in either format on input.
+--   In this case, the pointer will still be output as whatever the `ExpectedFormat` is, we don't retain the input format.
+--   Note that whenever `LenientParsing` is used, the Swagger/OpenAPI schema will indicate that a pointer is either
+--   a string or an array of path elements (which themselves are strings or ints). 
+--   So this will presumably generate sumtypes in whatever code is generated,
+--   even though in actuality the pointer will always be formatted as specified by `ExpectedFormat`.
+--   As a result it may be better when exposing an API to use `StrictParsing` for "output" parameters
+--   to more accurately reflect the the format you are exposing to clients.
+type data ParsingStrictness = StrictParsing | LenientParsing
+
+type StandardPointer = Pointer' RFC6901Format StrictParsing
+
+-- | A newtype wrapper around a `Pointer`. 
+-- 
+-- The parameters will affect how the pointer is serialised/deserialised.
+-- As the type paramters are phantom, one can `coerce` between different `Pointer'` types, 
+-- and indeed from `Pointer'` to `Pointer` and back again for free.
+--
+-- Also note that, whilst RFC 6901 allows one to specify the end of an array using @"-"@, the array format does not treat @"-"@ speciallly.
+-- Instead, it path elements of JSON type "numeric" as array indicies, and all strings as object keys. 
+-- It also follows the common convention of treating negative indicies as "from the end of the array".
+--
+-- So the path @"/foo/-"@ in RFC 6901 format would be @["foo", -1]@ in array format.
+--
+-- Important to note that array format also allows for paths like @["foo", -3]@, indicating the third last element of the array.
+-- RFC 6901 does not have a way of representing this. 
+--
+-- The `FromJSON` methods for `Pointer' RFC6901Format StrictParsing` will not accept negative indicies as per the RFC, 
+-- and the `ToJSON` methods of `Pointer'` for RFC 6901 will replace @-1@ with @"-"@, as per RFC 6901.
+-- But the `ToJSON` method of `Pointer' RFC6901Format` will output negative indicies other that @-1@ literally, 
+-- for example @["foo", -3]@ will be output as @"/foo/-3"@. 
+--
+-- This is technically not RFC 6901 compliant, but you'll only get this issue if you deserialise a pointer using the array format
+-- and then serialise it using the RFC 6901 format.
+newtype Pointer' (expectedFormat :: ExpectedFormat) (parsingStrictness :: ParsingStrictness) = Pointer' Pointer
+
+instance Autodocodec.HasCodec (Pointer' RFC6901Format StrictParsing) where
+  codec = coerce $ Autodocodec.bimapCodec rfc6901ToPointer formatPointer Autodocodec.codec 
+
+deriving via Path instance Autodocodec.HasCodec (Pointer' ArrayFormat StrictParsing)
+
+instance Autodocodec.HasCodec (Pointer' RFC6901Format LenientParsing) where
+  codec = coerce $ Autodocodec.bimapCodec textOrPathToPointer (Left . formatPointer) baseLenientCodec
+
+instance Autodocodec.HasCodec (Pointer' ArrayFormat LenientParsing) where
+  codec = coerce $ Autodocodec.bimapCodec textOrPathToPointer pointerToPath baseLenientCodec where
+    pointerToPath :: Pointer -> Either Text Path
+    pointerToPath = Right . pointerPath
+
+baseLenientCodec :: Autodocodec.JSONCodec (Either Text Path)
+baseLenientCodec = Autodocodec.disjointEitherCodec Autodocodec.codec Autodocodec.codec
+
+rfc6901ToPointer :: Text -> Either String Pointer
+rfc6901ToPointer = Aeson.parseEither parsePointer
+
+textOrPathToPointer :: Either Text Path -> Either String Pointer
+textOrPathToPointer = either rfc6901ToPointer (Right . Pointer)
 
 -- $setup
 -- >>> :set -XOverloadedStrings

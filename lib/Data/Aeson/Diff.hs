@@ -1,6 +1,3 @@
-{-# LANGUAGE NamedFieldPuns    #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 -- | Description: Extract and apply patches on JSON documents.
 --
 -- This module implements data types and operations to represent the
