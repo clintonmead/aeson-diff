@@ -16,11 +16,12 @@ module Data.Aeson.Patch (
   isMov,
   isCpy,
   isTst,
+  patch,
+  applyOperation
 ) where
 
-import Data.Aeson (FromJSON, ToJSON)
-import Data.Aeson.Types (Value)
-import Data.Aeson.Pointer (Pointer, ExpectedFormat (RFC6901Format, ArrayFormat), ParsingStrictness (StrictParsing, LenientParsing), Pointer'(..))
+import Data.Aeson (FromJSON, ToJSON, Result, Value)
+import Data.Aeson.Pointer (Pointer (Pointer), ExpectedFormat (RFC6901Format, ArrayFormat), ParsingStrictness (StrictParsing, LenientParsing), Pointer'(..))
 import qualified Autodocodec
 import Autodocodec ((.=), Autodocodec)
 import Data.HashMap.Strict (HashMap)
@@ -29,6 +30,8 @@ import Data.Void (Void)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Coerce (coerce)
 import Data.DList (DList)
+import Data.Foldable (foldlM)
+import Data.Aeson.Patch.Utilities (applyAdd, applyRem, applyRep, applyTst, applyCpy, applyMov)
 
 -- * Patches
 
@@ -50,6 +53,28 @@ deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => FromJSON (Patch' expectedFormat parsingStrictness)
 deriving via DList (Operation' expectedFormat parsingStrictness) instance 
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => Autodocodec.HasCodec (Patch' expectedFormat parsingStrictness)
+
+-- * Patching
+
+-- | Apply a patch to a JSON document.
+patch
+    :: Patch
+    -> Value
+    -> Result Value
+patch (Patch ops) val = foldlM (flip applyOperation) val ops
+
+-- | Apply an 'Operation' to a 'Value'.
+applyOperation
+    :: Operation
+    -> Value
+    -> Result Value
+applyOperation op json = case op of
+    Add path v'   -> applyAdd path v' json
+    Rem path      -> applyRem path    json
+    Rep path v'   -> applyRep path v' json
+    Tst path v    -> applyTst path v  json
+    Cpy path from -> applyCpy path from json
+    Mov path from -> applyMov path from json
 
 -- | Modify the pointers in the 'Operation's of a 'Patch'.
 --

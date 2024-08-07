@@ -13,26 +13,21 @@ module Data.Aeson.Diff (
     -- * Functions
     diff,
     diff',
-    patch,
-    applyOperation,
+    patch, -- This is re-exported from Data.Aeson.Patch for backward compatability
+    applyOperation -- This is re-exported from Data.Aeson.Patch for backward compatability
 ) where
 
-import           Control.Monad              (unless)
-import           Data.Aeson                 (Array, Object, Result(Success, Error), Value(Array, Object, String, Null, Bool, Number))
+import           Data.Aeson                 (Array, Object, Value(Array, Object, String, Null, Bool, Number))
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as HM
-import           Data.Foldable              (foldlM)
 import           Data.List                  (groupBy)
 import           Data.Maybe                 (fromJust)
 import           Data.Monoid                (Sum(Sum))
-import qualified Data.Text                  as T
-import           Data.Vector                (Vector)
 import qualified Data.Vector                as V
 import           Data.Vector.Distance       (Params(Params, equivalent, positionOffset, substitute, insert, delete, cost), leastChanges)
-
-import Data.Aeson.Patch                     (Operation(Add, Cpy, Mov, Rem, Rep, Tst), Patch(Patch), changePointer, changeValue, modifyPointer)
-import Data.Aeson.Pointer                   (Key(AKey, OKey), Pointer(Pointer), formatPointer, get, pointerFailure, pointerPath)
-import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (PosOffset, NegOffset, ArrayOffset), toAbsArrayOffset, (!?-), (//-))
+import Data.Aeson.Patch                     (Operation(Add, Cpy, Mov, Rem, Rep, Tst), Patch(Patch), changePointer, changeValue, modifyPointer, patch, applyOperation)
+import Data.Aeson.Pointer                   (Key(AKey, OKey), Pointer(Pointer), pointerPath)
+import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (ArrayOffset))
 import qualified Data.DList as DList
 
 -- * Configuration
@@ -198,206 +193,3 @@ diff' cfg v v' = Patch . DList.fromList $ worker mempty v v'
             | length path == 1 = 1
             | otherwise        = 0
         pos Tst{changePointer=Pointer _path} = 0
-
--- * Patching
-
--- | Apply a patch to a JSON document.
-patch
-    :: Patch
-    -> Value
-    -> Result Value
-patch (Patch ops) val = foldlM (flip applyOperation) val ops
-
--- | Apply an 'Operation' to a 'Value'.
-applyOperation
-    :: Operation
-    -> Value
-    -> Result Value
-applyOperation op json = case op of
-    Add path v'   -> applyAdd path v' json
-    Rem path      -> applyRem path    json
-    Rep path v'   -> applyRep path v' json
-    Tst path v    -> applyTst path v  json
-    Cpy path from -> applyCpy path from json
-    Mov path from -> applyMov path from json
-
--- | Apply an 'Add' operation to a document.
---
--- http://tools.ietf.org/html/rfc6902#section-4.1
---
--- - An empty 'Path' replaces the document.
--- - A single 'OKey' inserts or replaces the corresponding member in an object.
--- - A single 'AKey' inserts at the corresponding location.
--- - Longer 'Paths' traverse if they can and fail otherwise.
-applyAdd :: Pointer -> Value -> Value -> Result Value
-applyAdd pointer = go pointer
-  where
-    go (Pointer []) val _ =
-        return val
-    go (Pointer [AKey i]) v' (Array v) =
-        return (Array $ vInsert i v' v)
-    go (Pointer (AKey i : path)) v' (Array v) =
-        let fn :: Maybe Value -> Result (Maybe Value)
-            fn Nothing  = cannot "insert" "array" i pointer
-            fn (Just d) = Just <$> go (Pointer path) v' d
-        in Array <$> vModify i fn v
-    go (Pointer [OKey n]) v' (Object m) =
-        return . Object $ HM.insert n v' m
-    go (Pointer (OKey n : path)) v' (Object o) =
-        let fn :: Maybe Value -> Result (Maybe Value)
-            fn Nothing  = cannot "insert" "object" n pointer
-            fn (Just d) = Just <$> go (Pointer path) v' d
-        in Object <$> hmModify n fn o
-    go path _ v = pointerFailure path v
-
--- | Apply a 'Rem' operation to a document.
---
--- http://tools.ietf.org/html/rfc6902#section-4.2
---
--- - The target location MUST exist.
-applyRem :: Pointer -> Value -> Result Value
-applyRem from@(Pointer path) = go path
-  where
-    go [] _ = return Null
-    go [AKey i] (Array v) =
-        let fn :: Maybe Value -> Result (Maybe Value)
-            fn Nothing  = cannot "delete" "array" i from
-            fn (Just _) = return Nothing
-        in Array <$> vModify i fn v
-    go (AKey i : path) (Array v) =
-        let fn :: Maybe Value -> Result (Maybe Value)
-            fn Nothing  = cannot "traverse" "array" i from
-            fn (Just o) = Just <$> go path o
-        in Array <$> vModify i fn v
-    go [OKey n] (Object m) =
-        let fn :: Maybe Value -> Result (Maybe Value)
-            fn Nothing  = cannot "delete" "object" n from
-            fn (Just _) = return Nothing
-        in Object <$> hmModify n fn m
-    go (OKey n : path) (Object m) =
-        let fn :: Maybe Value -> Result (Maybe Value)
-            fn Nothing  = cannot "traverse" "object" n from
-            fn (Just o) = Just <$> go path o
-        in Object <$> hmModify n fn m
-    -- Type mismatch: clearly the thing we're deleting isn't here.
-    go _path value = pointerFailure from value
-
--- | Apply a 'Rep' operation to a document.
---
--- http://tools.ietf.org/html/rfc6902#section-4.3
---
--- - Functionally identical to a 'Rem' followed by an 'Add'.
-applyRep :: Pointer -> Value -> Value -> Result Value
-applyRep from v doc = applyRem from doc >>= applyAdd from v
-
--- | Apply a 'Mov' operation to a document.
---
--- http://tools.ietf.org/html/rfc6902#section-4.4
-applyMov :: Pointer -> Pointer -> Value -> Result Value
-applyMov path from doc = do
-  v <- get from doc
-  applyRem from doc >>= applyAdd path v
-
--- | Apply a 'Cpy' operation to a document.
---
--- http://tools.ietf.org/html/rfc6902#section-4.5
---
--- - The location must exist.
--- - Identical to an add with the appropriate value.
-applyCpy :: Pointer -> Pointer -> Value -> Result Value
-applyCpy path from doc = do
-  v <- get from doc
-  applyAdd path v doc
-
--- | Apply a 'Tst' operation to a document.
---
--- http://tools.ietf.org/html/rfc6902#section-4.6
---
--- - The location must exist.
--- - The value must be equal to the supplied value.
-applyTst :: Pointer -> Value -> Value -> Result Value
-applyTst path v doc = do
-    v' <- get path doc
-    unless (v == v') (Error . T.unpack $ "Element at \"" <> formatPointer path <> "\" fails test.")
-    return doc
-
--- * Utilities
-
--- $ These are some utility functions used in the functions defined
--- above. Mostly they just fill gaps in the APIs of the "Data.Vector"
--- and "Data.Aeson.KeyMap" modules.
-
--- | Delete an element in a vector.
-vDelete :: ArrayOffset -> Vector a -> Vector a
-vDelete i' v =
-    let
-      i = toAbsArrayOffset v i' 
-      l = V.length v
-    in 
-      V.slice 0 i v <> V.slice (i + 1) (l - i - 1) v
-
--- | Insert an element into a vector.
-vInsert :: ArrayOffset -> a -> Vector a -> Vector a
-vInsert i' a v =
-    let
-      i = case i' of
-        PosOffset n -> n
-        NegOffset n -> V.length v + 1 + n
-    in
-      V.slice 0 i v
-      <> V.singleton a
-      <> V.slice i (V.length v - i) v
-
--- | Modify the element at an index in a 'Vector'.
---
--- The function is passed the value at index @i@, or 'Nothing' if there is no
--- such element. The function should return 'Nothing' if it wants to have no
--- value corresponding to the index, or 'Just' if it wants a value.
---
--- Depending on the vector and the function, we will either:
---
--- - leave the vector unchanged;
--- - delete an existing element;
--- - insert a new element; or
--- - replace an existing element.
-vModify
-    :: ArrayOffset
-    -> (Maybe a -> Result (Maybe a))
-    -> Vector a
-    -> Result (Vector a)
-vModify i f v =
-    let a = v !?- i
-        a' = f a
-    in case (a, a') of
-        (Nothing, Success Nothing ) -> return v
-        (Just _ , Success Nothing ) -> return (vDelete i v)
-        (Nothing, Success (Just n)) -> return (vInsert i n v)
-        (Just _ , Success (Just n)) -> return (v //- [(i, n)])
-        (_      , Error   e       ) -> Error e
-
--- | Modify the value associated with a key in a 'KeyMap'.
---
--- The function is passed the value defined for @k@, or 'Nothing'. If the
--- function returns 'Nothing', the key and value are deleted from the map;
--- otherwise the value replaces the existing value in the returned map.
-hmModify
-    :: AesonKey.Key
-    -> (Maybe v -> Result (Maybe v))
-    -> HM.KeyMap v
-    -> Result (HM.KeyMap v)
-hmModify k f m = case f (HM.lookup k m) of
-    Error e          -> Error e
-    Success Nothing  -> return $ HM.delete k m
-    Success (Just v) -> return $ HM.insert k v m
-
--- | Report an error about being able to use a pointer key.
-cannot
-    :: (Show ix)
-    => String -- ^ Use to be made "delete", "traverse", etc.
-    -> String -- ^ Type "array" "object"
-    -> ix
-    -> Pointer
-    -> Result a
-cannot op ty ix p =
-    Error ("Cannot " <> op <> " missing " <> ty <> " member at index "
-          <> show ix <> " in pointer \"" <> T.unpack (formatPointer p) <> "\".")
