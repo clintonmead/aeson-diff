@@ -46,6 +46,7 @@ library:
   - bytestring
   - dlist
   - edit-distance-vector
+  - monoid-extras
   - scientific
   - text
   - unordered-containers

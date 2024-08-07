@@ -32,6 +32,9 @@ import Data.Coerce (coerce)
 import Data.DList (DList)
 import Data.Foldable (foldlM)
 import Data.Aeson.Patch.Utilities (applyAdd, applyRem, applyRep, applyTst, applyCpy, applyMov)
+import Data.Monoid.Action (Action (act))
+import Data.Monoid (Dual (getDual))
+import Control.Arrow ((>>>))
 
 -- * Patches
 
@@ -53,6 +56,16 @@ deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => FromJSON (Patch' expectedFormat parsingStrictness)
 deriving via DList (Operation' expectedFormat parsingStrictness) instance 
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => Autodocodec.HasCodec (Patch' expectedFormat parsingStrictness)
+
+-- | Action defined on Patch
+--
+-- Note we need to define this on `Dual Patch` because the laws of the typeclass `Action` require that:
+-- @(a <> b) `act` x = a `act` (b `act` x)@. 
+-- So the "last" patch needs to be the leftmost. But the semigroup instance on `Patch` is defined to be right-biased.
+-- Wrapping in `Dual` flips the semigroup operation. 
+instance Action (Dual Patch) (Result Value) where
+  act :: Dual Patch -> Result Value -> Result Value
+  act = getDual >>> patch >>> (=<<) 
 
 -- * Patching
 
