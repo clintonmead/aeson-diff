@@ -63,6 +63,7 @@ library
     , autodocodec
     , base
     , bytestring
+    , dlist
     , edit-distance-vector
     , scientific
     , text

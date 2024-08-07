@@ -28,12 +28,13 @@ import Data.Text (Text)
 import Data.Void (Void)
 import qualified Data.HashMap.Strict as HashMap
 import Data.Coerce (coerce)
+import Data.DList (DList)
 
 -- * Patches
 
 -- | Describes the changes between two JSON documents.
 newtype Patch = Patch
-    { patchOperations :: [Operation] }
+    { patchOperations :: DList Operation }
   deriving stock Show
   deriving newtype (Eq, Semigroup, Monoid)
   deriving (ToJSON, FromJSON) via Autodocodec (Patch' RFC6901Format StrictParsing)
@@ -47,14 +48,14 @@ deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => ToJSON (Patch' expectedFormat parsingStrictness)
 deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance 
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => FromJSON (Patch' expectedFormat parsingStrictness)
-deriving via [Operation' expectedFormat parsingStrictness] instance 
+deriving via DList (Operation' expectedFormat parsingStrictness) instance 
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => Autodocodec.HasCodec (Patch' expectedFormat parsingStrictness)
 
 -- | Modify the pointers in the 'Operation's of a 'Patch'.
 --
 -- See 'modifyPointer' for details.
 modifyPointers :: (Pointer -> Pointer) -> Patch -> Patch
-modifyPointers f (Patch ops) = Patch (map (modifyPointer f) ops)
+modifyPointers f (Patch ops) = Patch (modifyPointer f <$> ops)
 
 -- * Operations
 

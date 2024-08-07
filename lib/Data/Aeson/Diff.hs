@@ -33,6 +33,7 @@ import           Data.Vector.Distance       (Params(Params, equivalent, position
 import Data.Aeson.Patch                     (Operation(Add, Cpy, Mov, Rem, Rep, Tst), Patch(Patch), changePointer, changeValue, modifyPointer)
 import Data.Aeson.Pointer                   (Key(AKey, OKey), Pointer(Pointer), formatPointer, get, pointerFailure, pointerPath)
 import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (PosOffset, NegOffset, ArrayOffset), toAbsArrayOffset, (!?-), (//-))
+import qualified Data.DList as DList
 
 -- * Configuration
 
@@ -98,7 +99,7 @@ diff'
     -> Value
     -> Value
     -> Patch
-diff' cfg v v' = Patch (worker mempty v v')
+diff' cfg v v' = Patch . DList.fromList $ worker mempty v v'
   where
     check :: Monoid m => Bool -> m -> m
     check b v = if b then mempty else v
@@ -205,7 +206,6 @@ patch
     :: Patch
     -> Value
     -> Result Value
-patch (Patch []) val  = return val
 patch (Patch ops) val = foldlM (flip applyOperation) val ops
 
 -- | Apply an 'Operation' to a 'Value'.

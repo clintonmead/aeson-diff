@@ -16,6 +16,7 @@ import           Test.QuickCheck            (Arbitrary, Gen, arbitrary, oneof, q
 
 import Data.Aeson.Diff                      (Config(Config), diff, diff', patch)
 import Data.Aeson.Patch                     (isRem, isTst, patchOperations)
+import qualified Data.Foldable as Foldable
 
 showIt :: Value -> String
 showIt = BL.unpack . encode
@@ -104,7 +105,7 @@ prop_tst_before_rem
   -> Wellformed Value
   -> Bool
 prop_tst_before_rem (Wellformed f) (Wellformed t) =
-  let ops = zip [1..] (patchOperations $ diff' (Config True) f t)
+  let ops = zip [1..] (Foldable.toList (patchOperations $ diff' (Config True) f t))
       rs = map fst . filter (isRem . snd) $ ops
       ts = map fst . filter (isTst . snd) $ ops
       minusOneInTs :: Integer -> Bool
