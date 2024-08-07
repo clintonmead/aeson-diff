@@ -15,16 +15,21 @@ package aeson-diff
     -Wno-name-shadowing
     -Wredundant-constraints
     -Wunused-packages
-with-compiler: ghc-9.6.6
 
 source-repository-package
   type: git
   location: https://github.com/NorfairKing/autodocodec.git
-  tag: 4b5c728c7bcf111c833f251a6b87e5be41c305c5
+  tag: ac36615cb344ec43259fb65cafe3e55308ce4662
+  subdir: autodocodec
+
+source-repository-package
+  type: git
+  location: https://github.com/NorfairKing/autodocodec.git
+  tag: ac36615cb344ec43259fb65cafe3e55308ce4662
   subdir: autodocodec-openapi3
 
 source-repository-package
   type: git
   location: https://github.com/NorfairKing/autodocodec.git
-  tag: 4b5c728c7bcf111c833f251a6b87e5be41c305c5
+  tag: ac36615cb344ec43259fb65cafe3e55308ce4662
   subdir: autodocodec-swagger2
