@@ -36,6 +36,10 @@ language: GHC2021
 
 library:
   source-dirs: lib
+  other-modules:
+  - Data.Aeson.Patch.Generic.Utilities
+  - Data.Aeson.Patch.Utilities
+  - Data.Aeson.Pointer.ArrayOffset.Utilities
   dependencies:
   - aeson
   - autodocodec

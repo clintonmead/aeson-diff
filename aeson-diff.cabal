@@ -43,9 +43,9 @@ library
       Data.Aeson.Pointer
       Data.Aeson.Pointer.ArrayOffset
   other-modules:
-      Paths_aeson_diff
-  autogen-modules:
-      Paths_aeson_diff
+      Data.Aeson.Patch.Generic.Utilities
+      Data.Aeson.Patch.Utilities
+      Data.Aeson.Pointer.ArrayOffset.Utilities
   hs-source-dirs:
       lib
   default-extensions:

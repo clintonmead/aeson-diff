@@ -42,7 +42,8 @@ import Autodocodec (Autodocodec)
 import qualified Data.Aeson.Types as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import Data.Coerce (coerce)
-import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (ArrayOffset), (!?-))
+import Data.Aeson.Pointer.ArrayOffset (ArrayOffset (ArrayOffset))
+import Data.Aeson.Pointer.ArrayOffset.Utilities ((!?-))
 
 -- * Patch components
 

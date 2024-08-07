@@ -1,14 +1,7 @@
 module Data.Aeson.Pointer.ArrayOffset (
   ArrayOffset(ArrayOffset, PosOffset, NegOffset)
-, toAbsArrayOffset
-, (!?-)
-, (//-)
 ) where
   
-import Data.Vector (Vector)
-import qualified Data.Vector as V
-import qualified Data.Bifunctor as Bifunctor
-
 -- * Array offsets
 
 -- | An offset into an array. 
@@ -49,14 +42,3 @@ pattern PosOffset n <- (getSign -> PosOffset' n)
 
 pattern NegOffset :: Int -> ArrayOffset
 pattern NegOffset n <- (getSign -> NegOffset' n)
-
-toAbsArrayOffset :: Vector a -> ArrayOffset -> Int
-toAbsArrayOffset v = \case
-  PosOffset i -> i
-  NegOffset i -> V.length v + i
-
-(!?-) :: Vector a -> ArrayOffset -> Maybe a
-(!?-) v i = v V.!? toAbsArrayOffset v i
-
-(//-) :: Vector a -> [(ArrayOffset, a)] -> Vector a
-(//-) v l = v V.// (Bifunctor.first (toAbsArrayOffset v) <$> l)
