@@ -1,0 +1,107 @@
+name: aeson-diff
+version: 1.2.0.0
+github: clintonmead/aeson-diff
+license: BSD3
+license-file: LICENSE
+author: 
+- Thomas Sutton
+- Janus Troelsen <ysangkok@gmail.com>
+- Clinton Mead <clintonmead@gmail.com>
+maintainer: 
+- Clinton Mead <clintonmead@gmail.com>
+copyright: 
+- Thomas Sutton
+- Janus Troelsen <ysangkok@gmail.com>
+- Clinton Mead <clintonmead@gmail.com>
+- and others
+category: JSON, Web, Algorithms
+synopsis: Extract and apply patches to JSON documents.
+description:
+  This is a small library for working with changes to JSON documents. It
+  includes a library and two command-line executables in the style of the
+  diff(1) and patch(1) commands available on many systems.
+extra-source-files:
+- CHANGELOG.md
+- README.md
+custom-setup:
+  dependencies:
+  - base
+  - cabal-doctest
+  - Cabal
+
+dependencies:
+- base
+
+language: GHC2021
+
+library:
+  source-dirs: lib
+  dependencies:
+  - aeson
+  - autodocodec
+  - bytestring
+  - edit-distance-vector
+  - scientific
+  - text
+  - unordered-containers
+  - vector
+  - yaml
+  default-extensions:
+  - ApplicativeDo
+  - DerivingStrategies
+  - DerivingVia
+  - LambdaCase
+  - PatternSynonyms
+  - OverloadedStrings
+  - RecordWildCards
+  - TypeData
+  - ViewPatterns
+
+executables:             
+  json-diff:
+    source-dirs: src
+    main: diff.hs
+    dependencies:
+    - aeson
+    - aeson-diff
+    - bytestring
+    - optparse-applicative
+    - yaml
+  json-patch:
+    source-dirs: src
+    main: patch.hs
+    dependencies:
+    - aeson
+    - aeson-diff
+    - bytestring
+    - optparse-applicative
+    - yaml
+
+tests:
+  properties: 
+    source-dirs: test
+    main: properties.hs
+    dependencies:
+    - QuickCheck
+    - aeson
+    - aeson-diff
+    - bytestring
+    - vector
+  examples:
+    source-dirs: test
+    main: examples.hs
+    dependencies:
+    - Glob
+    - aeson
+    - aeson-diff
+    - bytestring
+    - directory
+    - filepath
+  doctests:
+    source-dirs: test
+    ghc-options: -threaded
+    main: doctests.hs
+    dependencies:
+    - doctest
+    generated-other-modules: 
+    - Build_doctests
