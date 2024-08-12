@@ -20,7 +20,7 @@ module Data.Aeson.Patch (
   applyOperation
 ) where
 
-import Data.Aeson (FromJSON, ToJSON, Result, Value)
+import Data.Aeson (FromJSON, ToJSON, Result, Value (..), Object)
 import Data.Aeson.Pointer (Pointer (Pointer), ExpectedFormat (RFC6901Format, ArrayFormat), ParsingStrictness (StrictParsing, LenientParsing), Pointer'(..))
 import qualified Autodocodec
 import Autodocodec ((.=), Autodocodec)
@@ -65,7 +65,19 @@ deriving via DList (Operation' expectedFormat parsingStrictness) instance
 -- Wrapping in `Dual` flips the semigroup operation. 
 instance Action (Dual Patch) (Result Value) where
   act :: Dual Patch -> Result Value -> Result Value
-  act = getDual >>> patch >>> (=<<) 
+  act = getDual >>> patch >>> (=<<)
+
+instance Action (Dual Patch) (Result Object) where
+  act :: Dual Patch -> Result Object -> Result Object
+  act p = (Object <$>) >>> act p >>> (>>= f)  where 
+    f :: Value -> Result Object
+    f = \case
+      Object o' -> pure o'
+      Array _ -> fail "Expected patch to result in a JSON object but resulted in a JSON array"
+      String _ -> fail "Expected patch to result in a JSON object but resulted in a JSON string"
+      Number _ -> fail "Expected patch to result in a JSON object but resulted in a JSON number"
+      Bool _ -> fail "Expected patch to result in a JSON object but resulted in a JSON boolean"
+      Null -> fail "Expected patch to result in a JSON object but resulted in a JSON null"
 
 -- * Patching
 
