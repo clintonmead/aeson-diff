@@ -49,6 +49,8 @@ newtype Patch = Patch
 --
 -- See `Pointer'` for more information.
 newtype Patch' (expectedFormat :: ExpectedFormat) (parsingStrictness :: ParsingStrictness) = Patch' Patch
+  deriving stock Show
+  deriving newtype (Eq, Semigroup, Monoid)
 
 deriving via Autodocodec (Patch' expectedFormat parsingStrictness) instance 
   Autodocodec.HasObjectCodec (Operation' expectedFormat parsingStrictness) => ToJSON (Patch' expectedFormat parsingStrictness)
@@ -78,6 +80,12 @@ instance Action (Dual Patch) (Result Object) where
       Number _ -> fail "Expected patch to result in a JSON object but resulted in a JSON number"
       Bool _ -> fail "Expected patch to result in a JSON object but resulted in a JSON boolean"
       Null -> fail "Expected patch to result in a JSON object but resulted in a JSON null"
+
+instance Action (Dual (Patch' expectedFormat parsingStrictness)) (Result Value) where
+  act = act . (coerce :: Dual (Patch' expectedFormat parsingStrictness) -> Dual Patch)
+
+instance Action (Dual (Patch' expectedFormat parsingStrictness)) (Result Object) where
+  act = act . (coerce :: Dual (Patch' expectedFormat parsingStrictness) -> Dual Patch)
 
 -- * Patching
 
