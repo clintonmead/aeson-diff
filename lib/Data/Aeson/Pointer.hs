@@ -121,8 +121,10 @@ parsePointer t
       let l = T.split (== '~') t
       in T.concat $ take 1 l <> fmap step (tail l)
     key t
-      | T.null t         = fail "JSON components must not be empty."
-      | T.all isNumber t = return (AKey (read $ T.unpack t))
+      | not (T.null t) && T.all isNumber t = return (AKey (read $ T.unpack t))
+      -- Note: The empty string is a valid json key and may appear in a pointer as
+      -- in <http://tools.ietf.org/html/rfc6901> the grammar for reference-token says
+      -- `reference-token = *( unescaped / escaped )`
       | otherwise        = return . OKey . fromText $ unesc t
 
 instance ToJSON Pointer where
