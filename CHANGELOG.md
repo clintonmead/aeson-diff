@@ -1,3 +1,8 @@
+aeson-diff 1.1.0.14
+
+    * Fix pointer application after json roundtrip
+      https://github.com/clintonmead/aeson-diff/pull/13
+
 aeson-diff 1.1.0.5
 
     * Support GHC-8.4.x in recent Stackage releases.

@@ -1,5 +1,5 @@
 name:                aeson-diff
-version:             1.1.0.13
+version:             1.1.0.14
 synopsis:            Extract and apply patches to JSON documents.
 description:
   .
@@ -47,7 +47,7 @@ executable             json-diff
   hs-source-dirs:      src
   main-is:             diff.hs
   other-modules:       Codec
-  build-depends:       base
+  build-depends:       base <5
                      , aeson >= 2.0.3
                      , aeson-diff
                      , bytestring
@@ -59,7 +59,7 @@ executable             json-patch
   hs-source-dirs:      src
   main-is:             patch.hs
   other-modules:       Codec
-  build-depends:       base
+  build-depends:       base <5
                      , aeson >= 2.0.3
                      , aeson-diff
                      , bytestring
@@ -71,7 +71,7 @@ test-suite             properties
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             properties.hs
-  build-depends:       base
+  build-depends:       base <5
                      , QuickCheck
                      , aeson >= 2.0.3
                      , aeson-diff
@@ -83,7 +83,7 @@ test-suite             examples
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             examples.hs
-  build-depends:       base
+  build-depends:       base <5
                      , Glob
                      , aeson >= 2.0.3
                      , aeson-diff
@@ -97,7 +97,7 @@ test-suite doctests
   type:                exitcode-stdio-1.0
   ghc-options:         -threaded
   main-is:             doctests.hs
-  build-depends:       base
+  build-depends:       base <5
                      , doctest >= 0.18.2
   other-modules:       Build_doctests
   autogen-modules:     Build_doctests
