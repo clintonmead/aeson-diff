@@ -1,3 +1,8 @@
+aeson-diff 1.1.1.15
+
+    * Allow empty json keys in pointer syntaxAllow empty json keys in pointer syntax
+      https://github.com/clintonmead/aeson-diff/pull/14
+
 aeson-diff 1.1.0.14
 
     * Fix pointer application after json roundtrip
