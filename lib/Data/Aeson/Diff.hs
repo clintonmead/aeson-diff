@@ -17,7 +17,7 @@ module Data.Aeson.Diff (
     applyOperation -- This is re-exported from Data.Aeson.Patch for backward compatability
 ) where
 
-import           Data.Aeson                 (Array, Object, Value(Array, Object, String, Null, Bool, Number))
+import           Data.Aeson                 (Array, Object, ToJSON(toJSON), Value(Array, Object, String, Null, Bool, Number))
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as HM
 import           Data.List                  (groupBy)
@@ -193,3 +193,13 @@ diff' cfg v v' = Patch . DList.fromList $ worker mempty v v'
             | length path == 1 = 1
             | otherwise        = 0
         pos Tst{changePointer=Pointer _path} = 0
+
+-- | Compare two documents using their `ToJSON` instance.
+--
+-- Uses the 'defaultConfig'.
+toJSONDiff :: ToJSON a => a -> a -> Patch
+toJSONDiff a1 a2 = diff (toJSON a1) (toJSON a2)
+
+-- | Compare two documents using their `ToJSON` instance.
+toJSONDiff' :: ToJSON a => Config -> a -> a -> Patch
+toJSONDiff' cfg a1 a2 = diff' cfg (toJSON a1) (toJSON a2)
